@@ -14,7 +14,7 @@
 
 -compile(export_all).
 
--include_lib("../src/harvester_records.hrl").
+-include_lib("../include/ajp_records.hrl").
 
 receive_ajp13_message(Socket) ->
   case gen_tcp:recv(Socket, 0) of

@@ -24,7 +24,7 @@
 -define(ERROR_500_TEXT, "500 - Internal Server Error").
 -define(ERROR_503_TEXT, "503 - Service Unavailable").
 
--include_lib("../src/harvester_records.hrl").
+-include_lib("../include/ajp_records.hrl").
 
 % ajp_server external interface
 
