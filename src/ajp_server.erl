@@ -1,7 +1,26 @@
 %%%-------------------------------------------------------------------
 %%% File:      ajp_server.erl
 %%% @author    Jebu Ittiachen <jebui@yahoo-inc.com> [http://blog.jebu.net/]
-%%% @copyright 2008 Jebu Ittiachen
+%%% @copyright 2009 Jebu Ittiachen
+%%%
+%%% Permission is hereby granted, free of charge, to any person obtaining a copy
+%%% of this software and associated documentation files (the "Software"), to deal
+%%% in the Software without restriction, including without limitation the rights
+%%% to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+%%% copies of the Software, and to permit persons to whom the Software is
+%%% furnished to do so, subject to the following conditions:
+%%%
+%%% The above copyright notice and this permission notice shall be included in
+%%% all copies or substantial portions of the Software.
+%%%
+%%% THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+%%% IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+%%% FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+%%% AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+%%% LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+%%% OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+%%% THE SOFTWARE.
+%%%
 %%% @doc  
 %%%
 %%% @end  
@@ -23,6 +42,7 @@
 -define(ERROR_REDIRECT, "Location: /\r\n\r\n").
 -define(ERROR_500_TEXT, "500 - Internal Server Error").
 -define(ERROR_503_TEXT, "503 - Service Unavailable").
+-define(SCRIPT_TIMEOUT, 120).
 
 -include_lib("../include/ajp_records.hrl").
 
@@ -68,7 +88,7 @@ ajp_worker(LSocket) ->
   case gen_tcp:accept(LSocket) of
     {ok, Socket} -> 
       gen_server:call(ajp_server, {new_worker, self()}),
-      {ok, Msg} = ajp:receive_ajp13_message(Socket),
+      {ok, Msg} = ajp:receive_message(Socket),
       ajp_server:handle_request(Socket, Msg),
       gen_tcp:close(Socket)
   end.
@@ -84,18 +104,15 @@ handle_request(Socket, Msg) ->
       error_logger:info_report(["Error",
         trunc_io:fprint(Error, 500)]),
       gen_tcp:send(Socket, ?ERROR_500_TEXT)
-  end,
-  gen_tcp:send(Socket, ajp:encode_ajp_header_response(#ajp_response_envelope{headers=[{"content-length", "12"}]})),
-  gen_tcp:send(Socket, ajp:encode_ajp_body_response(<<"testing data">>, 12)),
-  gen_tcp:send(Socket, << 16#4142:16,2:16,5:8,0:8>>).
+  end.
 
-dispatch_request(Socket, Msg) ->
+dispatch_request(Socket, Msg) when is_record(Msg, ajp_request_envelope) ->
   % here we should invoke the right module based on request uri
   % wait for messages back from the modules for getting more data
   % also messages from module to send responses back to the server.
   % timeout errors, process dying should be handled here.
-  ok.
-
+  gen_ajp_handler:init_request(Socket, Msg).
+      
 % callback stubs
 
 terminate(_Reason, _State) -> {}.

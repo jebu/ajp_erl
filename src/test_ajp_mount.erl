@@ -1,7 +1,8 @@
 %%%-------------------------------------------------------------------
-%%% File:      ajp_records.erl
+%%% File:      test_ajp_mount.erl
 %%% @author    Jebu Ittiachen <jebui@yahoo-inc.com> [http://blog.jebu.net/]
 %%% @copyright 2009 Jebu Ittiachen
+%%%
 %%% Permission is hereby granted, free of charge, to any person obtaining a copy
 %%% of this software and associated documentation files (the "Software"), to deal
 %%% in the Software without restriction, including without limitation the rights
@@ -19,14 +20,36 @@
 %%% LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 %%% OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 %%% THE SOFTWARE.
+%%%
 %%% @doc  
 %%%
 %%% @end  
 %%%
-%%% @since 2009-02-13 by Jebu Ittiachen
+%%% @since 2009-02-16 by Jebu Ittiachen
 %%%-------------------------------------------------------------------
+-module(test_ajp_mount).
 -author('jebui@yahoo-inc.com').
+-behaviour(gen_ajp_handler).
 
-%% ajp request structure
--record(ajp_request_envelope, {method, protocol, request_uri, remote_address, remote_host, server_name, port, is_ssl, headers = [], attributes = []}).
--record(ajp_response_envelope, {status = 200, message = "OK", headers = [{"content-length","0"},{"servlet-engine","AJPERL"}]}).
+%% API
+-export([handle_request/2]).
+
+-include_lib("../include/ajp_records.hrl").
+
+%%====================================================================
+%% API
+%%====================================================================
+%%--------------------------------------------------------------------
+%% @spec 
+%% @doc
+%% @end 
+%%--------------------------------------------------------------------
+handle_request(Message, PPid) when is_record(Message, ajp_request_envelope) ->
+  ok = gen_ajp_handler:send_headers(#ajp_response_envelope{headers=[{"content-length", "12"}]}, PPid),
+  ok = gen_ajp_handler:send_data(<<"testing data">>, PPid),
+  gen_ajp_handler:end_request(PPid).
+  
+%%====================================================================
+%% Internal functions
+%%====================================================================
+
