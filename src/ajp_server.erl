@@ -39,11 +39,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, 
         terminate/2, code_change/3]).
 
--define(ERROR_REDIRECT, "Location: /\r\n\r\n").
--define(ERROR_500_TEXT, "500 - Internal Server Error").
--define(ERROR_503_TEXT, "503 - Service Unavailable").
--define(SCRIPT_TIMEOUT, 120).
-
 -include_lib("../include/ajp_records.hrl").
 
 % ajp_server external interface
@@ -77,10 +72,13 @@ handle_call({new_worker, Worker}, _From, LSocket) ->
   erlang:unlink(Worker),
   {reply, ok, LSocket};
 
-handle_call(stop, _From, LSocket) -> {stop, stop_requested, LSocket}.
+handle_call(stop, _From, LSocket) -> 
+  gen_tcp:close(LSocket),
+  {stop, stop_requested, []}.
 
 handle_info({'EXIT', _Pid, _Reason}, LSocket) -> 
-  {noreply, LSocket}.
+  gen_tcp:close(LSocket),
+  {noreply, []}.
 
 % ajp stuff
 
@@ -90,7 +88,9 @@ ajp_worker(LSocket) ->
       gen_server:call(ajp_server, {new_worker, self()}),
       {ok, Msg} = ajp:receive_message(Socket),
       ajp_server:handle_request(Socket, Msg),
-      gen_tcp:close(Socket)
+      gen_tcp:close(Socket);
+    {error, closed} -> 
+      gen_tcp:close(LSocket)
   end.
 
 handle_request(Socket, Msg) ->
@@ -98,12 +98,12 @@ handle_request(Socket, Msg) ->
     ok -> null;
     {'EXIT', {timeout, Error}} ->
       error_logger:info_report(["Timeout",
-        trunc_io:fprint(Error, 500)]),
-      gen_tcp:send(Socket, ?ERROR_500_TEXT);
+        trunc_io:fprint(Error, 500)]);
+      %send error response
     Error ->
       error_logger:info_report(["Error",
-        trunc_io:fprint(Error, 500)]),
-      gen_tcp:send(Socket, ?ERROR_500_TEXT)
+        trunc_io:fprint(Error, 500)])
+      %send error response
   end.
 
 dispatch_request(Socket, Msg) when is_record(Msg, ajp_request_envelope) ->
@@ -114,8 +114,11 @@ dispatch_request(Socket, Msg) when is_record(Msg, ajp_request_envelope) ->
   gen_ajp_handler:init_request(Socket, Msg).
       
 % callback stubs
-
-terminate(_Reason, _State) -> {}.
+terminate(_Reason, []) -> 
+  ok;
+terminate(_Reason, LSocket) -> 
+  gen_tcp:close(LSocket),
+  ok.
 
 handle_cast(_Cast, State) -> {noreply, State}.
 

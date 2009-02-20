@@ -1,8 +1,19 @@
 AJP for Erlang
 ==============
-
 This is a protocol binding for AJP to Erlang.
 
+USAGE
+=====
+* Start the server
+	ajp_server:start_link(8009)
+* configure mod_jk to add a worker pointing to the newly started erlang worker
+* configure apache to redirect /servlet/* the new worker JKMount and restart apache
+* send request to /servlet/test
+* should see a response coming from ajperl
+
+DISCLAIMER
+==========
+Use at your own risk. This works for a simple get request currently. 
 
 TODO
 ====
