@@ -86,7 +86,8 @@ ajp_worker(LSocket) ->
   case gen_tcp:accept(LSocket) of
     {ok, Socket} -> 
       gen_server:call(ajp_server, {new_worker, self()}),
-      {ok, Msg} = ajp:receive_message(Socket),
+      {ok, <<18,52, Length:16>>} = gen_tcp:recv(Socket, 4),
+      {ok, Msg} = ajp:receive_message(Socket, Length),
       ajp_server:handle_request(Socket, Msg),
       gen_tcp:close(Socket);
     {error, closed} -> 

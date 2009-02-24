@@ -27,26 +27,21 @@
 %%%-------------------------------------------------------------------
 -module(ajp).
 -author('jebui@yahoo-inc.com').
--export([receive_message/1]).
+-export([receive_message/2]).
 
 -compile(export_all).
 
 -include_lib("../include/ajp_records.hrl").
 
-receive_message(Socket) ->
-  case gen_tcp:recv(Socket, 0) of
+receive_message(Socket, Length) ->
+  case gen_tcp:recv(Socket, Length) of
     {ok, Binary} -> 
-      {ok, AJP_Request} = parse_message(Binary),
+      {ok, AJP_Request} = parse_body(Binary),
       {ok, AJP_Request};
     _Other -> {error, invalid_ajp_header}
   end.
 
-parse_message(<< 18,52, AJP_Body/binary >>) ->
-  parse_body(AJP_Body);
-parse_message(_) ->
-  {error, "Invalid AJP envelope"}.
-  
-parse_body( << _RequestLength:16, 2, AJP_ForwardRequest/binary >> ) ->
+parse_body( << 2, AJP_ForwardRequest/binary >> ) ->
   parse_forward_request(AJP_ForwardRequest);
 parse_body(_) ->
   {error, "Unknown AJP request"}.

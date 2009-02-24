@@ -32,7 +32,7 @@
 -export([behaviour_info/1]).
 
 %% API
--export([init_request/2, handle_data/2, request_data/2, send_data/2, send_headers/2, end_request/1]).
+-export([init_request/2, request_data/2, send_data/2, send_headers/2, end_request/1]).
 
 -include_lib("../include/ajp_records.hrl").
 
@@ -40,7 +40,11 @@
 %% API
 %%====================================================================
 behaviour_info(callbacks) ->
-    [{handle_request, 2} % handle a request for given action and the request params, state
+    [{handle_request, 2}, % handle a request for given action and the request params, state
+     {handle_get_request, 2},
+     {handle_post_request, 2},
+     {handle_put_request, 2},
+     {handle_delete_request, 2}
     ];
 behaviour_info(_Other) ->
     undefined.
@@ -52,22 +56,30 @@ behaviour_info(_Other) ->
 %%--------------------------------------------------------------------  
 init_request(Socket, Msg) ->
   Module = lookup_uri_handler(Msg#ajp_request_envelope.request_uri),
-  HPid = spawn_link(Module, handle_request, [Msg, self()]),
+  HPid = dispatch_request(Module, Msg),
   service_child_pid(Socket, HPid).
 
-handle_data(_Data, _State) ->
-  ok.
-
+dispatch_request(Module, #ajp_request_envelope{method = "GET"} = Msg) ->
+  spawn_link(Module, handle_get_request, [Msg, self()]);
+dispatch_request(Module, #ajp_request_envelope{method = "POST"} = Msg) ->
+  spawn_link(Module, handle_post_request, [Msg, self()]);
+dispatch_request(Module, #ajp_request_envelope{method = "PUT"} = Msg) ->
+  spawn_link(Module, handle_put_request, [Msg, self()]);
+dispatch_request(Module, #ajp_request_envelope{method = "DELETE"} = Msg) ->
+  spawn_link(Module, handle_delete_request, [Msg, self()]);
+dispatch_request(Module, Msg) when is_record (Msg, ajp_request_envelope)->
+  spawn_link(Module, handle_request, [Msg, self()]).
+  
 request_data(Length, Pid) ->
   % request from the other end.
   % blocks 
   Pid!{self(), get_data, Length},
-  Binary = 
+  {Binary, AL} = 
     receive
-      {Pid, requested_data, Data} ->
-        Data
+      {Pid, requested_data, Data, ActualLength} ->
+        {Data, ActualLength}
     end,  
-  {ok, Binary}.
+  {ok, Binary, AL}.
   
 send_data(Data, Pid) ->
   Pid!{self(), send_data, Data},
@@ -99,15 +111,20 @@ service_child_pid(Socket, HPid) ->
   receive
     {HPid, get_data, Length} ->
       gen_tcp:send(Socket, ajp:encode_get_body_response(Length)),
-      {ok, Data} = 
-        case gen_tcp:recv(Socket, 0) of
-          {ok, Binary} -> 
-            {ok, Binary};
+      {ok, Data, L} = 
+        case gen_tcp:recv(Socket, 4) of
+          {ok, <<18,52, L1:16>>} -> 
+            case gen_tcp:recv(Socket, L1) of
+              {ok, Binary} ->
+                {ok, Binary, L1};
+              _ ->
+                {error, read_error}
+            end;
           _Other -> 
             HPid ! {self(), error_getting_data},
             {error, read_error}
       end,
-      HPid ! {self(), requested_data, Data},
+      HPid ! {self(), requested_data, Data, L},
       service_child_pid(Socket, HPid);
     {HPid, send_header, ResponseHeaders} when is_record(ResponseHeaders, ajp_response_envelope) ->
       gen_tcp:send(Socket, ajp:encode_header_response(ResponseHeaders)),
