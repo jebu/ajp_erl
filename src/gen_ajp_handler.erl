@@ -115,8 +115,8 @@ service_child_pid(Socket, HPid) ->
         case gen_tcp:recv(Socket, 4) of
           {ok, <<18,52, L1:16>>} -> 
             case gen_tcp:recv(Socket, L1) of
-              {ok, Binary} ->
-                {ok, Binary, L1};
+              {ok, << DataLength:16, Binary/binary >>} ->
+                {ok, Binary, DataLength};
               _ ->
                 {error, read_error}
             end;
