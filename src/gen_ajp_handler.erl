@@ -28,11 +28,11 @@
 %%% @since 2009-02-18 by Jebu Ittiachen
 %%%-------------------------------------------------------------------
 -module(gen_ajp_handler).
--author('jebui@yahoo-inc.com').
+-author('jebu@jebu.net').
 -export([behaviour_info/1]).
 
 %% API
--export([init_request/2, request_data/2, send_data/2, send_headers/2, end_request/1]).
+-export([init_request/2, request_data/2, send_data/2, send_headers/2, end_request/1, send_error_response/3, dispatch_request/3]).
 
 -include_lib("../include/ajp_records.hrl").
 
@@ -50,26 +50,61 @@ behaviour_info(_Other) ->
     undefined.
 
 %%--------------------------------------------------------------------
-%% @spec 
-%% @doc
+%% @spec init_request(Socket, Message) -> ok
+%% @doc generic skelton for handling a service request
 %% @end 
 %%--------------------------------------------------------------------  
 init_request(Socket, Msg) ->
-  Module = lookup_uri_handler(Msg#ajp_request_envelope.request_uri),
-  HPid = dispatch_request(Module, Msg),
+  HPid = 
+  case lookup_uri_handler(Msg#ajp_request_envelope.request_uri) of
+    {unknown_module, Module} -> 
+      spawn_link(gen_ajp_handler, send_error_response, [500, lists:concat(["No handler for path ", Module]), self()]);
+    Module ->
+      spawn_link(gen_ajp_handler, dispatch_request, [Module, Msg, self()])
+  end,
   service_child_pid(Socket, HPid).
 
-dispatch_request(Module, #ajp_request_envelope{method = "GET"} = Msg) ->
-  spawn_link(Module, handle_get_request, [Msg, self()]);
-dispatch_request(Module, #ajp_request_envelope{method = "POST"} = Msg) ->
-  spawn_link(Module, handle_post_request, [Msg, self()]);
-dispatch_request(Module, #ajp_request_envelope{method = "PUT"} = Msg) ->
-  spawn_link(Module, handle_put_request, [Msg, self()]);
-dispatch_request(Module, #ajp_request_envelope{method = "DELETE"} = Msg) ->
-  spawn_link(Module, handle_delete_request, [Msg, self()]);
-dispatch_request(Module, Msg) when is_record (Msg, ajp_request_envelope)->
-  spawn_link(Module, handle_request, [Msg, self()]).
+%%--------------------------------------------------------------------
+%% @spec dispatch_request(Module, Msg, PPid) -> ok
+%% @doc routes the request to the proper handler script, does 
+%% wrap sround processing of a request.
+%% @end 
+%%--------------------------------------------------------------------  
+dispatch_request(Module, Msg, PPid) ->
+  ok = dispatch_method_request(Module, Msg, PPid),
+  gen_ajp_handler:end_request(PPid).
   
+%%--------------------------------------------------------------------
+%% @spec 
+%% @doc routes to correct handler method
+%% @end 
+%%--------------------------------------------------------------------  
+dispatch_method_request(Module, #ajp_request_envelope{method = "GET"} = Msg, PPid) ->
+  Module:handle_get_request(Msg, PPid);
+dispatch_method_request(Module, #ajp_request_envelope{method = "POST"} = Msg, PPid) ->
+  Module:handle_post_request(Msg, PPid);
+dispatch_method_request(Module, #ajp_request_envelope{method = "PUT"} = Msg, PPid) ->
+  Module:handle_put_request(Msg, PPid);
+dispatch_method_request(Module, #ajp_request_envelope{method = "DELETE"} = Msg, PPid) ->
+  Module:handle_delete_request(Msg, PPid);
+dispatch_method_request(Module, Msg, PPid) when is_record (Msg, ajp_request_envelope)->
+  Module:handle_request(Msg, PPid).
+
+%%--------------------------------------------------------------------
+%% @spec 
+%% @doc encodes and sends an error response with requested code
+%% and message to the caller.
+%% @end 
+%%--------------------------------------------------------------------  
+send_error_response(ErrorCode, ErrorReason, PPid) ->
+  send_headers(#ajp_response_envelope{status = ErrorCode, message = ErrorReason}, PPid),
+  end_request(PPid).
+  
+%%--------------------------------------------------------------------
+%% @spec 
+%% @doc reads data from the caller and sends back to handler.
+%% @end 
+%%--------------------------------------------------------------------  
 request_data(Length, Pid) ->
   % request from the other end.
   % blocks 
@@ -81,6 +116,11 @@ request_data(Length, Pid) ->
     end,  
   {ok, Binary, AL}.
   
+%%--------------------------------------------------------------------
+%% @spec 
+%% @doc sends the data response to the caller.
+%% @end 
+%%--------------------------------------------------------------------  
 send_data(Data, Pid) ->
   Pid!{self(), send_data, Data},
   receive
@@ -88,6 +128,11 @@ send_data(Data, Pid) ->
       ok
   end.
   
+%%--------------------------------------------------------------------
+%% @spec 
+%% @doc sends the response headers to the caller.
+%% @end 
+%%--------------------------------------------------------------------  
 send_headers(ResponseHeaders, Pid) ->
   Pid!{self(), send_header, ResponseHeaders},
   receive
@@ -95,39 +140,63 @@ send_headers(ResponseHeaders, Pid) ->
       ok
   end.
   
+%%--------------------------------------------------------------------
+%% @spec 
+%% @doc sends the ajp request end headers.
+%% @end 
+%%--------------------------------------------------------------------  
 end_request(Pid) ->
     Pid!{self(), end_response}.
   
 %%====================================================================
 %% Internal functions
 %%====================================================================
+%%--------------------------------------------------------------------
+%% map a request uri to the handler module. The expectation is that the
+%% script name matches a known module in the bin path. If not able to 
+%% find returns unknown_module
+%%--------------------------------------------------------------------  
+lookup_uri_handler(URI) ->
+  try list_to_existing_atom(lists:last(split_uri_path(URI))) of
+    Module -> Module
+  catch
+    _:_ -> {unknown_module, URI}
+  end.
 
-lookup_uri_handler(_) ->
-  % do lookup based on env params
-  test_ajp_mount.
+%%--------------------------------------------------------------------
+%% tokenizes a uri on the path seperator char
+%%--------------------------------------------------------------------  
+split_uri_path(URI) ->
+  string:tokens(URI, "/").
 
-%
+%%--------------------------------------------------------------------
+%% does necessary stuff to send an error response to the server.
+%%--------------------------------------------------------------------  
+local_send_error_response(ErrorCode, ErrorResponse, Socket) ->
+  ResponseEnvelope = add_standard_headers(#ajp_response_envelope{status = ErrorCode, message = ErrorResponse}),
+  gen_tcp:send(Socket, ajp:encode_header_response(ResponseEnvelope)),
+  gen_tcp:send(Socket, << $A, $B,2:16,5:8,0:8>>).
+  
+%%--------------------------------------------------------------------
+%% after dispatching the request to the proper module the process waits
+%% here for servicing the handler requests.
+%%--------------------------------------------------------------------  
 service_child_pid(Socket, HPid) ->
   receive
     {HPid, get_data, Length} ->
       gen_tcp:send(Socket, ajp:encode_get_body_response(Length)),
-      {ok, Data, L} = 
-        case gen_tcp:recv(Socket, 4) of
-          {ok, <<18,52, L1:16>>} -> 
-            case gen_tcp:recv(Socket, L1) of
-              {ok, << DataLength:16, Binary/binary >>} ->
-                {ok, Binary, DataLength};
-              _ ->
-                {error, read_error}
-            end;
-          _Other -> 
-            HPid ! {self(), error_getting_data},
+      {ok, L} = ajp:read_ajp_packet(Socket),
+      {ok, Data, L1} = 
+        case gen_tcp:recv(Socket, L) of
+          {ok, << DataLength:16, Binary/binary >>} ->
+            {ok, Binary, DataLength};
+          _ ->
             {error, read_error}
-      end,
-      HPid ! {self(), requested_data, Data, L},
+        end,
+      HPid ! {self(), requested_data, Data, L1},
       service_child_pid(Socket, HPid);
     {HPid, send_header, ResponseHeaders} when is_record(ResponseHeaders, ajp_response_envelope) ->
-      gen_tcp:send(Socket, ajp:encode_header_response(ResponseHeaders)),
+      gen_tcp:send(Socket, ajp:encode_header_response(add_standard_headers(ResponseHeaders))),
       HPid ! {self(), headers_sent},
       service_child_pid(Socket, HPid);
     {HPid, send_data, Binary} ->
@@ -138,11 +207,16 @@ service_child_pid(Socket, HPid) ->
       gen_tcp:send(Socket, << $A, $B,2:16,5:8,0:8>>),
       ok;
     {'EXIT', HPid, _Reason} ->
-      gen_tcp:send(Socket, ajp:encode_header_response(#ajp_response_envelope{status = 503})),
-      gen_tcp:send(Socket, << $A, $B,2:16,5:8,0:8>>),
+      local_send_error_response(500, "Server Error - Handler died unexpectedly", Socket),
       ok      
   after ?SCRIPT_TIMEOUT ->
-    gen_tcp:send(Socket, ajp:encode_header_response(#ajp_response_envelope{status = 503})),
-    gen_tcp:send(Socket, << $A, $B,2:16,5:8,0:8>>),
+    local_send_error_response(503, "Timeout - Handler timedout", Socket),
     ok
   end.
+
+%
+add_standard_headers(#ajp_response_envelope{headers=ResponseHeaders} = Envelope) ->
+  Envelope#ajp_response_envelope{headers=
+    [{"x-erlang-pid",pid_to_list(self())}, 
+    {"servlet-engine","AJPERL"} | ResponseHeaders]}.
+

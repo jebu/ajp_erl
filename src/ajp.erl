@@ -26,13 +26,25 @@
 %%% @since 2009-02-13 by Jebu Ittiachen
 %%%-------------------------------------------------------------------
 -module(ajp).
--author('jebui@yahoo-inc.com').
--export([receive_message/2]).
-
--compile(export_all).
+-author('jebu@jebu.net').
+-export([read_ajp_packet/1, receive_message/2]).
+-export([encode_body_response/2, encode_header_response/1, encode_end_response/0]).
+-export([encode_get_body_response/1, encode_headers/3, encode_header_name/1]).
+-export([encode_string/1]).
 
 -include_lib("../include/ajp_records.hrl").
 
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+read_ajp_packet(Socket) ->
+  case gen_tcp:recv(Socket, 4, 500) of
+    {ok, <<18,52, Length:16>>} ->
+      {ok, Length};
+    {error, Reason } ->
+      {error, Reason}
+  end.
+    
 receive_message(Socket, Length) ->
   case gen_tcp:recv(Socket, Length) of
     {ok, Binary} -> 
@@ -110,10 +122,8 @@ parse_request_body(AJP_Request, AJP_Request_Envelope) ->
   {RemoteHost, A4} = parse_string(A3),
   {ServerName, A5} = parse_string(A4),
   <<Port:16, IsSSL:8, HeaderLength:16, A6/binary>> = A5,
-  {ok, AJP_Headers, _Rest} = decode_encoded_headers(A6, [], HeaderLength),
-  % TODO: we are currently not doing the optional attributes and will fail if we get any
-  % we let this to not disrupt our life.
-  % << 16#FF >> = Rest,
+  {ok, AJP_Headers, Rest} = decode_encoded_headers(A6, [], HeaderLength),
+  {ok, AJP_Attributes} = decode_request_attributes(Rest,[]),
   
   {ok, AJP_Request_Envelope#ajp_request_envelope{
     protocol = Protocol,
@@ -123,7 +133,8 @@ parse_request_body(AJP_Request, AJP_Request_Envelope) ->
     server_name = ServerName, 
     port = Port, 
     is_ssl = IsSSL, 
-    headers = AJP_Headers
+    headers = AJP_Headers,
+    attributes = AJP_Attributes
   }}.
 
 decode_encoded_headers(Rest, HeaderAcc, HeaderLength) when HeaderLength =< 0 ->
@@ -136,7 +147,15 @@ decode_encoded_headers(<<HeaderSize:16, HeaderName:HeaderSize/binary, 0,
   decode_encoded_headers(Rest, [{binary_to_list(HeaderName), binary_to_list(HeaderV)} | HeaderAcc], (HeaderLength - 1));
 decode_encoded_headers(_Rest, _HeaderAcc, HeaderLength) ->
   {error, "insufficient headers in request", HeaderLength}.
-        
+
+decode_request_attributes(<< 16#FF:8 >>, Attributes) ->
+  {ok, Attributes};
+decode_request_attributes(<< 16#0A, ASize:16, AName:ASize/binary, 0, 
+                          VSize:16, Value:VSize/binary, 0, Rest/binary >>, Attributes) ->
+  decode_request_attributes(Rest, [{AName, Value} | Attributes]);
+decode_request_attributes(<< AttrName:8, Size:16, Value:Size/binary, 0, Rest/binary >>, Attributes) ->
+  decode_request_attributes(Rest, [{lookup_attribute_name(AttrName), Value} | Attributes]).
+  
 lookup_header_name(16#01) ->
   "accept";
 lookup_header_name(16#02) ->
@@ -165,6 +184,35 @@ lookup_header_name(16#0D) ->
   "referer";
 lookup_header_name(16#0E) ->
   "user-agent".
+
+% Attribute lookup
+lookup_attribute_name(16#01) ->
+  "context";
+lookup_attribute_name(16#02) ->
+  "servlet_path";
+lookup_attribute_name(16#03) ->
+  "remote_user";
+lookup_attribute_name(16#04) ->
+  "auth_type";
+lookup_attribute_name(16#05) ->
+  "query_string";
+lookup_attribute_name(16#06) ->
+  "route";
+lookup_attribute_name(16#07) ->
+  "ssl_cert";
+lookup_attribute_name(16#08) ->
+  "ssl_cipher";
+lookup_attribute_name(16#09) ->
+  "ssl_session";
+lookup_attribute_name(16#0A) ->
+  "req_attribute";
+lookup_attribute_name(16#0B) ->
+  "ssl_key_size";
+lookup_attribute_name(16#0C) ->
+  "secret";
+lookup_attribute_name(16#0D) ->
+  "stored_method".
+  
   
 parse_string(<< Length:16, AJPString:Length/binary, 0, RestOfBody/binary >>) when Length < 16#FFFF ->
   {binary_to_list(AJPString), RestOfBody};
@@ -217,7 +265,11 @@ encode_header_name("servlet-engine") ->
 encode_header_name("status") ->
   << 16#A00A:16 >>;
 encode_header_name("www-authenticate") ->
-  << 16#A00B:16 >>.
+  << 16#A00B:16 >>;
+encode_header_name(Header) ->
+  L = length(Header),
+  B = list_to_binary(Header),
+  << L:16, B/binary, 0 >>.
   
 encode_string(String) ->
   L = length(String),

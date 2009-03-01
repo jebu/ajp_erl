@@ -10,7 +10,7 @@ INCLUDE_DIR=include
 ERL = erl -o $(EBIN_DIR) -I ${INCLUDE_DIR}
 SRC = src
 
-MODS = ajp ajp_server gen_ajp_handler test_ajp_mount
+MODS = ajp ajp_server ajp_app ajp_sup gen_ajp_handler test_ajp_mount
 
 all:	compile
 

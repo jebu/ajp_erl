@@ -28,7 +28,7 @@
 %%% @since 2009-02-13 by Jebu Ittiachen
 %%%-------------------------------------------------------------------
 -module(ajp_server).
--author('jebui@yahoo-inc.com').
+-author('jebu@jebu.net').
 -behaviour(gen_server).
 
 -compile([verbose, report_errors, report_warnings, trace, debug_info]).
@@ -86,7 +86,7 @@ ajp_worker(LSocket) ->
   case gen_tcp:accept(LSocket) of
     {ok, Socket} -> 
       gen_server:call(ajp_server, {new_worker, self()}),
-      {ok, <<18,52, Length:16>>} = gen_tcp:recv(Socket, 4),
+      {ok, Length} = ajp:read_ajp_packet(Socket),
       {ok, Msg} = ajp:receive_message(Socket, Length),
       ajp_server:handle_request(Socket, Msg),
       gen_tcp:close(Socket);

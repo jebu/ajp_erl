@@ -28,7 +28,7 @@
 %%% @since 2009-02-16 by Jebu Ittiachen
 %%%-------------------------------------------------------------------
 -module(test_ajp_mount).
--author('jebui@yahoo-inc.com').
+-author('jebu@jebu.net').
 -behaviour(gen_ajp_handler).
 
 %% API
@@ -46,33 +46,27 @@
 %%--------------------------------------------------------------------
 handle_request(Message, PPid) when is_record(Message, ajp_request_envelope) ->
   ok = gen_ajp_handler:send_headers(#ajp_response_envelope{headers=[{"content-length", "12"}]}, PPid),
-  ok = gen_ajp_handler:send_data(<<"testing data">>, PPid),
-  gen_ajp_handler:end_request(PPid).
-
+  ok = gen_ajp_handler:send_data(<<"testing data">>, PPid).
 %
 handle_get_request(_Message, PPid) ->
   ok = gen_ajp_handler:send_headers(#ajp_response_envelope{headers=[{"content-length", "12"}]}, PPid),
-  ok = gen_ajp_handler:send_data(<<"testing data">>, PPid),
-  gen_ajp_handler:end_request(PPid).
+  ok = gen_ajp_handler:send_data(<<"testing data">>, PPid).
 
 %
 handle_post_request(_Message, PPid) ->
   {ok, Data, AL} = gen_ajp_handler:request_data(12, PPid),
   ok = gen_ajp_handler:send_headers(#ajp_response_envelope{headers=[{"content-length", integer_to_list(AL)}]}, PPid),
-  ok = gen_ajp_handler:send_data(Data, PPid),
-  gen_ajp_handler:end_request(PPid).
+  ok = gen_ajp_handler:send_data(Data, PPid).
 
 %
 handle_put_request(_Message, PPid) ->
   ok = gen_ajp_handler:send_headers(#ajp_response_envelope{headers=[{"content-length", "12"}]}, PPid),
-  ok = gen_ajp_handler:send_data(<<"testing data">>, PPid),
-  gen_ajp_handler:end_request(PPid).
+  ok = gen_ajp_handler:send_data(<<"testing data">>, PPid).
 
 %
 handle_delete_request(_Message, PPid) ->
   ok = gen_ajp_handler:send_headers(#ajp_response_envelope{headers=[{"content-length", "12"}]}, PPid),
-  ok = gen_ajp_handler:send_data(<<"testing data">>, PPid),
-  gen_ajp_handler:end_request(PPid).
+  ok = gen_ajp_handler:send_data(<<"testing data">>, PPid).
   
 %%====================================================================
 %% Internal functions

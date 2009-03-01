@@ -25,7 +25,7 @@
 %%%
 %%% @since 2009-02-13 by Jebu Ittiachen
 %%%-------------------------------------------------------------------
--author('jebui@yahoo-inc.com').
+-author('jebu@jebu.net').
 
 %% ajp request structure
 -record(ajp_request_envelope, {method, protocol, request_uri, remote_address, remote_host, server_name, port, is_ssl, headers = [], attributes = []}).
