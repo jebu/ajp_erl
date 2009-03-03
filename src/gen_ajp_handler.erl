@@ -175,7 +175,7 @@ split_uri_path(URI) ->
 local_send_error_response(ErrorCode, ErrorResponse, Socket) ->
   ResponseEnvelope = add_standard_headers(#ajp_response_envelope{status = ErrorCode, message = ErrorResponse}),
   gen_tcp:send(Socket, ajp:encode_header_response(ResponseEnvelope)),
-  gen_tcp:send(Socket, << $A, $B,2:16,5:8,0:8>>).
+  gen_tcp:send(Socket, << $A, $B,2:16,5:8,1:8>>).
   
 %%--------------------------------------------------------------------
 %% after dispatching the request to the proper module the process waits
@@ -185,7 +185,7 @@ service_child_pid(Socket, HPid) ->
   receive
     {HPid, get_data, Length} ->
       gen_tcp:send(Socket, ajp:encode_get_body_response(Length)),
-      {ok, L} = ajp:read_ajp_packet(Socket),
+      {ok, L} = ajp:read_ajp_packet(Socket, 500),
       {ok, Data, L1} = 
         case gen_tcp:recv(Socket, L) of
           {ok, << DataLength:16, Binary/binary >>} ->
@@ -204,7 +204,7 @@ service_child_pid(Socket, HPid) ->
       HPid ! {self(), data_sent},
       service_child_pid(Socket, HPid);
     {HPid, end_response} ->
-      gen_tcp:send(Socket, << $A, $B,2:16,5:8,0:8>>),
+      gen_tcp:send(Socket, << $A, $B,2:16,5:8,1:8>>),
       ok;
     {'EXIT', HPid, _Reason} ->
       local_send_error_response(500, "Server Error - Handler died unexpectedly", Socket),

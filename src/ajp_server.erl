@@ -86,14 +86,37 @@ ajp_worker(LSocket) ->
   case gen_tcp:accept(LSocket) of
     {ok, Socket} -> 
       gen_server:call(ajp_server, {new_worker, self()}),
-      {ok, Length} = ajp:read_ajp_packet(Socket),
-      {ok, Msg} = ajp:receive_message(Socket, Length),
-      ajp_server:handle_request(Socket, Msg),
-      gen_tcp:close(Socket);
+      service_ajp_connection(Socket);
     {error, closed} -> 
       gen_tcp:close(LSocket)
   end.
 
+service_ajp_connection(Socket) ->
+  case ajp:read_ajp_packet(Socket) of
+    {ok, Length} ->
+      try ajp:receive_message(Socket, Length) of
+        {ok, shutdown_request} ->
+          error_logger:info_report(["Service Handler received shutdown message"]),
+          gen_tcp:close(Socket);
+        {ok, ping_request} ->
+          error_logger:info_report(["Service Handler received ping message"]),
+          gen_tcp:close(Socket);
+        {ok, Msg} when is_record(Msg, ajp_request_envelope) -> 
+          ajp_server:handle_request(Socket, Msg),
+          service_ajp_connection(Socket);
+        ReturnVal -> 
+          error_logger:error_report(["Service Handler returned with ", ReturnVal]),
+          gen_tcp:close(Socket)
+      catch
+        EType:EReason ->
+          error_logger:error_report(["Service Handler threw up with ", {exception, EType}, {reason, EReason}]),
+          gen_tcp:close(Socket)
+      end;
+    {error, Reason} ->
+      error_logger:error_report(["Service Handler ending with ", {reason, Reason}]),
+      gen_tcp:close(Socket)
+  end.
+        
 handle_request(Socket, Msg) ->
   case catch dispatch_request(Socket, Msg) of
     ok -> null;

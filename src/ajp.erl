@@ -27,7 +27,7 @@
 %%%-------------------------------------------------------------------
 -module(ajp).
 -author('jebu@jebu.net').
--export([read_ajp_packet/1, receive_message/2]).
+-export([read_ajp_packet/1, read_ajp_packet/2, receive_message/2]).
 -export([encode_body_response/2, encode_header_response/1, encode_end_response/0]).
 -export([encode_get_body_response/1, encode_headers/3, encode_header_name/1]).
 -export([encode_string/1]).
@@ -38,7 +38,10 @@
 %%
 %%--------------------------------------------------------------------
 read_ajp_packet(Socket) ->
-  case gen_tcp:recv(Socket, 4, 500) of
+  read_ajp_packet(Socket, infinity).
+  
+read_ajp_packet(Socket, Timeout) ->
+  case gen_tcp:recv(Socket, 4, Timeout) of
     {ok, <<18,52, Length:16>>} ->
       {ok, Length};
     {error, Reason } ->
@@ -55,6 +58,10 @@ receive_message(Socket, Length) ->
 
 parse_body( << 2, AJP_ForwardRequest/binary >> ) ->
   parse_forward_request(AJP_ForwardRequest);
+parse_body( << 7, _/binary >> ) ->
+  {ok, shutdown_request};
+parse_body( << 8, _/binary >> ) ->
+  {ok, ping_request};  
 parse_body(_) ->
   {error, "Unknown AJP request"}.
   
