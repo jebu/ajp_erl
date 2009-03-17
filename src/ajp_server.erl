@@ -67,9 +67,8 @@ handle_call({listen, Port}, _From, State) ->
     Error -> {stop, {listen_failed, Error}, State}
   end;
 
-handle_call({new_worker, Worker}, _From, LSocket) -> 
+handle_call({new_worker, _Worker}, _From, LSocket) -> 
   spawn_link(fun() -> ajp_server:ajp_worker(LSocket) end),
-  erlang:unlink(Worker),
   {reply, ok, LSocket};
 
 handle_call(stop, _From, LSocket) -> 
