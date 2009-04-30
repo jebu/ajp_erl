@@ -34,21 +34,21 @@
 -compile([verbose, report_errors, report_warnings, trace, debug_info]).
 -define(TCP_OPTIONS, [binary, {active, false}, {reuseaddr, true}, {packet, raw}]).
 
--export([start_link/1, stop/0, handle_request/2, ajp_worker/1]).
+-export([start_link/1, stop/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, 
         terminate/2, code_change/3]).
 
--include_lib("../include/ajp_records.hrl").
+-include("ajp_records.hrl").
 
 % ajp_server external interface
 
 start_link(Port) ->
-  error_logger:info_report([{'AJP13 SERVER STARTS'}]),
+  error_logger:info_report([{"AJP13 SERVER STARTS"}]),
   case gen_server:start_link({local, ajp_server}, ajp_server, [], []) of
-  {ok, Server} -> gen_server:call(ajp_server, {listen, Port}),
+    {ok, Server} -> gen_server:call(ajp_server, {listen, Port}),
                     {ok, Server};
-  {error, {already_started, Server}} -> {ok, Server}
+    {error, {already_started, Server}} -> {ok, Server}
   end.
 
 stop() ->
@@ -62,14 +62,12 @@ init(_Args) ->
 
 handle_call({listen, Port}, _From, State) ->
   case catch gen_tcp:listen(Port, ?TCP_OPTIONS) of
-    {ok, LSocket} -> spawn_link(fun() -> ajp_worker(LSocket) end),
+    {ok, LSocket} -> 
+      %io:format("Spawning listener for [~p] ~n", [Port]),
+      spawn_link(fun() -> ajp_worker(LSocket) end),
                       {reply, ok, LSocket};
     Error -> {stop, {listen_failed, Error}, State}
   end;
-
-handle_call({new_worker, _Worker}, _From, LSocket) -> 
-  spawn_link(fun() -> ajp_server:ajp_worker(LSocket) end),
-  {reply, ok, LSocket};
 
 handle_call(stop, _From, LSocket) -> 
   gen_tcp:close(LSocket),
@@ -84,58 +82,19 @@ handle_info({'EXIT', _Pid, _Reason}, LSocket) ->
 ajp_worker(LSocket) ->
   case gen_tcp:accept(LSocket) of
     {ok, Socket} -> 
-      gen_server:call(ajp_server, {new_worker, self()}),
-      service_ajp_connection(Socket);
+    	{Ms,S,Us} = erlang:now(),
+    	HandlerName = list_to_atom(lists:flatten(["ajp_worker_",
+                                                integer_to_list(Ms),
+                                                integer_to_list(S),
+                                                integer_to_list(Us)])),
+      HandlerSpec = {HandlerName, {gen_ajp_handler, start_link, [HandlerName, Socket]}, temporary, 2000, worker, dynamic},
+      {ok, CPid} = supervisor:start_child(ajp_sup, HandlerSpec),
+      gen_tcp:controlling_process(Socket, CPid),
+      ajp_worker(LSocket);
     {error, closed} -> 
       gen_tcp:close(LSocket)
   end.
-
-service_ajp_connection(Socket) ->
-  case ajp:read_ajp_packet(Socket) of
-    {ok, Length} ->
-      try ajp:receive_message(Socket, Length) of
-        {ok, shutdown_request} ->
-          error_logger:info_report(["Service Handler received shutdown message"]),
-          gen_tcp:close(Socket);
-        {ok, ping_request} ->
-          error_logger:info_report(["Service Handler received ping message"]),
-          gen_tcp:close(Socket);
-        {ok, Msg} when is_record(Msg, ajp_request_envelope) -> 
-          ajp_server:handle_request(Socket, Msg),
-          service_ajp_connection(Socket);
-        ReturnVal -> 
-          error_logger:error_report(["Service Handler returned with ", ReturnVal]),
-          gen_tcp:close(Socket)
-      catch
-        EType:EReason ->
-          error_logger:error_report(["Service Handler threw up with ", {exception, EType}, {reason, EReason}]),
-          gen_tcp:close(Socket)
-      end;
-    {error, Reason} ->
-      error_logger:error_report(["Service Handler ending with ", {reason, Reason}]),
-      gen_tcp:close(Socket)
-  end.
         
-handle_request(Socket, Msg) ->
-  case catch dispatch_request(Socket, Msg) of
-    ok -> null;
-    {'EXIT', {timeout, Error}} ->
-      error_logger:info_report(["Timeout",
-        trunc_io:fprint(Error, 500)]);
-      %send error response
-    Error ->
-      error_logger:info_report(["Error",
-        trunc_io:fprint(Error, 500)])
-      %send error response
-  end.
-
-dispatch_request(Socket, Msg) when is_record(Msg, ajp_request_envelope) ->
-  % here we should invoke the right module based on request uri
-  % wait for messages back from the modules for getting more data
-  % also messages from module to send responses back to the server.
-  % timeout errors, process dying should be handled here.
-  gen_ajp_handler:init_request(Socket, Msg).
-      
 % callback stubs
 terminate(_Reason, []) -> 
   ok;

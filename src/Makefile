@@ -1,12 +1,12 @@
 # leave these lines alone
 .SUFFIXES: .erl .beam
 
+INCLUDE_DIR=../include
 .erl.beam:
-	erlc -o $(EBIN_DIR) -pa $(EBIN_DIR) -W $<
+	erlc -I$(INCLUDE_DIR) -o $(EBIN_DIR) -pa $(EBIN_DIR) -W $<
 
 SOURCE_DIR=src
 EBIN_DIR=../ebin
-INCLUDE_DIR=include
 ERL = erl -o $(EBIN_DIR) -I ${INCLUDE_DIR}
 SRC = src
 

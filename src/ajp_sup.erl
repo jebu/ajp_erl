@@ -46,9 +46,9 @@ start_link(Port) ->
 %% @end 
 %%--------------------------------------------------------------------
 init([Port]) ->
-    AJPServer = {ajp_server,{ajp_server,start_link,[Port]},
-              permanent,2000,worker,dynamic},
-    {ok,{{one_for_all,10,10}, [AJPServer]}}.
+    AJPServer = {ajp_server, {ajp_server, start_link, [Port]},
+              permanent, 2000, worker, dynamic},
+    {ok, {{one_for_all, 10, 10}, [AJPServer]}}.
 
 %%====================================================================
 %% Internal functions
