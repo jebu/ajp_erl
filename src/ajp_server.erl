@@ -32,7 +32,7 @@
 -behaviour(gen_server).
 
 -compile([verbose, report_errors, report_warnings, trace, debug_info]).
--define(TCP_OPTIONS, [binary, {active, false}, {reuseaddr, true}, {packet, raw}]).
+-define(TCP_OPTIONS, [binary, {active, false}, {reuseaddr, true}, {packet, raw}, {sndbuf, 16384}, {recbuf, 16384}]).
 
 -export([start_link/1, stop/0]).
 

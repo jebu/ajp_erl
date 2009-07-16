@@ -55,7 +55,7 @@ handle_get_request(_Message, PPid) ->
 %
 handle_post_request(Message, PPid) ->
   Length = gen_ajp_handler:get_header(Message, "content-length"),
-  {ok, Data, AL} = read_data(<<>>, list_to_integer(Length), PPid),
+  {ok, Data, AL} = read_data(list_to_integer(Length), PPid),
   ok = gen_ajp_handler:send_headers(#ajp_response_envelope{headers=[{"content-length", integer_to_list(AL)}]}, PPid),
   ok = gen_ajp_handler:send_data(Data, PPid).
 
@@ -73,8 +73,5 @@ handle_delete_request(_Message, PPid) ->
 %% Internal functions
 %%====================================================================
 
-read_data(Buffer, Length, _) when size(Buffer) =:= Length ->
-  {ok, Buffer, Length};
-read_data(Buffer, Length, Pid) ->
-  {ok, Data, _} = gen_ajp_handler:request_data(Length, Pid),
-  read_data(<<Buffer/binary, Data/binary>>, Length, Pid).
+read_data(Length, Pid) ->
+  gen_ajp_handler:request_data(Length, Pid).

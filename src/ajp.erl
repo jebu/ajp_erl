@@ -58,8 +58,10 @@ read_buffered_ajp_packet(_) ->
 
 receive_buffered_message(Length, Buffer) ->
   << Request:Length/binary, Rest/binary >> = Buffer,
-  {ok, AJP_Request} = parse_body(Request),
-  {ok, AJP_Request, Rest}.
+  case parse_body(Request) of
+    {ok, AJP_Request} -> {ok, AJP_Request, Rest};
+    {ok, unknown_request, Request} -> {ok, unknown_request, Buffer}
+  end.
   
 parse_body( << 2, AJP_ForwardRequest/binary >> ) ->
   parse_forward_request(AJP_ForwardRequest);
@@ -70,7 +72,7 @@ parse_body( << 10, _/binary >> ) ->
 parse_body( << 18, 52, Length:16, AJP_ForwardRequest:Length/binary >> ) ->
   parse_body(AJP_ForwardRequest);
 parse_body(Req) ->
-  {error, "Unknown AJP request", Req}.
+  {ok, unknown_request, Req}.
   
 parse_forward_request(<< 1, AJP_Request/binary >>) ->
   parse_request_body(AJP_Request, #ajp_request_envelope{method = "OPTIONS"});
@@ -235,7 +237,7 @@ parse_string(<< 16#FFFF:16, Body/binary >>) ->
 
 %% Resonse related 
 encode_body_response(Binary, Length) ->
-  << $A, $B, (Length + 3):16, 3:8, Length:16, Binary/binary >>.
+  << $A, $B, (Length + 4):16, 3:8, Length:16, Binary/binary, 0:8 >>.
 
 encode_header_response(ResponseHeaders) ->
   {ok, NumHeaders, ResponseBytes} = encode_headers(ResponseHeaders#ajp_response_envelope.headers, 0, <<>>),

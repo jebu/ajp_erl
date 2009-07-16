@@ -29,6 +29,6 @@
 
 %% ajp request structure
 -record(ajp_request_envelope, {method, protocol, request_uri, remote_address, remote_host, server_name, port, is_ssl, headers = [], attributes = []}).
--record(ajp_response_envelope, {status = 200, message = "OK", headers = [{"content-length","0"},{"servlet-engine","AJPERL"}]}).
+-record(ajp_response_envelope, {status = 200, message = "OK", headers = [{"content-length","0"}]}).
 
--define(SCRIPT_TIMEOUT, 120).
+-define(SCRIPT_TIMEOUT, 60000).

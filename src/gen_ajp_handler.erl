@@ -42,8 +42,11 @@
 -record(handler_state, {socket, buffer, hpid}).
 
 %% API
--export([start_link/2, request_data/2, send_data/2, send_headers/2, end_request/1, 
-        get_header/2, set_header/2, send_error_response/3, dispatch_request/3]).
+-export([start_link/2, request_data/2, request_data/1,
+         send_data/2, send_headers/2, end_request/1, 
+         get_header/2, get_uri/1, set_header/2, 
+         get_attribute/2, get_query_param/3,
+         send_error_response/3, dispatch_request/3]).
 
 %% gen_fsm callbacks
 -export([init/1, handle_event/3,
@@ -96,32 +99,15 @@ idle(Message, State) ->
 % we send data back send_data
 % we end the request - switches to idle
 % 
-assigned({get_data, Length}, _, State = #handler_state{socket = Socket, buffer = <<>>}) ->
-  gen_tcp:send(Socket, ajp:encode_get_body_response(Length)),
-  {ok, _L, Data} = ajp:read_ajp_packet(Socket, 500),
-  D1 = read_requested_data(Socket, Data),
-  case ajp:read_buffered_ajp_packet(D1) of
-    {ok, _L, Req, Rest} ->
-      << DataLength:16, Binary:DataLength/binary >> = Req,
-      {reply, {requested_data, Binary, DataLength}, assigned, State#handler_state{buffer = Rest}, ?SCRIPT_TIMEOUT};
-    incomplete ->
-      error_logger:info_report([{"Did not get enought data"},{data, D1}]),
-      {reply, {requested_data, <<>>, 0}, assigned, State#handler_state{buffer = D1}, ?SCRIPT_TIMEOUT}
+assigned({get_data, Length}, {Cpid, _}, State = #handler_state{socket = Socket, buffer = Buffer, hpid = Cpid}) ->
+  case get_data_bytes(Socket, Buffer, Length, <<>>) of
+    {_, Acc, DL, Rest} ->
+      {reply, {requested_data, Acc, (Length - DL)}, assigned, State#handler_state{buffer = Rest}, ?SCRIPT_TIMEOUT};
+    _ ->
+      {reply, {requested_data, <<>>, 0}, assigned, State#handler_state{buffer = Buffer}, ?SCRIPT_TIMEOUT}
   end;
-  
-%
-assigned({get_data, _}, _, State = #handler_state{socket = Socket, buffer = Buffer}) ->
-  D1 = read_requested_data(Socket, Buffer),
-  case ajp:read_buffered_ajp_packet(D1) of
-    {ok, _L, Req, Rest} ->
-      << DataLength:16, Binary:DataLength/binary >> = Req,
-      {reply, {requested_data, Binary, DataLength}, assigned, State#handler_state{buffer = Rest}, ?SCRIPT_TIMEOUT};
-    incomplete ->
-      error_logger:info_report([{"Did not get enought data"},{data, D1}]),
-      {reply, {requested_data, <<>>, 0}, assigned, State#handler_state{buffer = D1}, ?SCRIPT_TIMEOUT}
-  end;
-  
-assigned({send_header, Headers}, _, State = #handler_state{socket = Socket}) 
+    
+assigned({send_header, Headers}, {Cpid, _}, State = #handler_state{socket = Socket, hpid = Cpid}) 
   when is_record(Headers, ajp_response_envelope) ->
   gen_tcp:send(Socket,
                ajp:encode_header_response(
@@ -130,14 +116,14 @@ assigned({send_header, Headers}, _, State = #handler_state{socket = Socket})
 %
 % req to send data
 %
-assigned({send_data, Binary}, _, State = #handler_state{socket = Socket}) ->
+assigned({send_data, Binary}, {Cpid, _}, State = #handler_state{socket = Socket, hpid = Cpid}) ->
   split_send_data(Socket, Binary),
   {reply, data_sent, assigned, State, ?SCRIPT_TIMEOUT};
 
 %
 % Catch all for sync messages in assigned state
-assigned(Message, _, State) ->
-  error_logger:info_report([{"Unknown message received in state assigned"}, {message, Message}]),
+assigned(Message, CPid, State) ->
+  error_logger:info_report([{"Unknown message received in state assigned"}, {message, Message}, {state, State}, {caller, CPid}]),
   {next_state, assigned, State}.
 
 %
@@ -152,6 +138,8 @@ assigned(end_response, State = #handler_state{socket = Socket}) ->
 % handle script timeout
 %
 assigned(timeout, State = #handler_state{socket = Socket}) ->
+  % kill the handler
+  exit(State#handler_state.hpid, normal),
   local_send_error_response(503, "Timeout - Handler timedout", Socket),
   local_send_end_response(Socket, 1),
   drain_socket(Socket, 1),
@@ -220,12 +208,12 @@ handle_info({'EXIT', HPid, _Reason}, assigned, State = #handler_state{socket = S
   inet:setopts(Socket,[{active, once}]),
   {next_state, idle, State#handler_state{hpid = undefined, buffer = <<>>}};
 %
-handle_info({'EXIT', HPid, _Reason}, idle, State) ->
-  error_logger:info_report([{"Unknown process died in state idle "}, {pid, HPid}, {state_data, State}]),
+handle_info({'EXIT', _, _Reason}, idle, State) ->
+  % ignore this, we had a process exit message of one of the handlers we serviced
   {next_state, idle, State};
 %
 handle_info({tcp, Socket, Data}, idle, State = #handler_state{socket = Socket, buffer = Buffer}) ->
-  {ok, L, AJPBody, Rest} = ajp:read_buffered_ajp_packet(Data),
+  {ok, L, AJPBody, Rest} = ajp:read_buffered_ajp_packet(<< Buffer/binary, Data/binary >>),
   try ajp:receive_buffered_message(L, AJPBody) of
     {ok, shutdown_request, <<>>} ->
       error_logger:info_report(["Service Handler received shutdown message"]),
@@ -238,6 +226,11 @@ handle_info({tcp, Socket, Data}, idle, State = #handler_state{socket = Socket, b
     {ok, Msg, <<>>} when is_record(Msg, ajp_request_envelope) -> 
       {ok, HPid} = init_request(Msg),
       {next_state, assigned, State#handler_state{buffer = <<Buffer/binary, Rest/binary>>, hpid = HPid}, ?SCRIPT_TIMEOUT};
+    {ok, unknown_request, Message} ->
+      error_logger:error_report(["Unknown AJP Message received", {message, Message}, {buffer, Buffer}]),
+      gen_tcp:close(Socket),
+      {stop, normal, State};
+%      {next_state, idle, State#handler_state{buffer = <<Buffer/binary, Message/binary>>}};
     ReturnVal -> 
       error_logger:error_report(["Service Handler returned with ", ReturnVal]),
       gen_tcp:close(Socket),
@@ -248,6 +241,11 @@ handle_info({tcp, Socket, Data}, idle, State = #handler_state{socket = Socket, b
       gen_tcp:close(Socket),
       {stop, normal, State}
   end;
+
+handle_info({tcp_closed, _}, _, State = #handler_state{socket = Socket}) ->
+  error_logger:info_report(["Service Handler shutting down other side terminated"]),
+  gen_tcp:close(Socket),
+  {stop, normal, State};
   
 handle_info(Message, StateName, State) ->
   error_logger:info_report([{"Unknown info message recieved "}, {message, Message}, {state_data, State}, {state, StateName}]),
@@ -320,6 +318,12 @@ request_data(Length, Pid) ->
   % blocks 
   {requested_data, Data, ActualLength} = gen_fsm:sync_send_event(Pid, {get_data, Length}),
   {ok, Data, ActualLength}.
+%
+request_data(Pid) ->
+  % request from the other end.
+  % blocks 
+  {requested_data, Data, ActualLength} = gen_fsm:sync_send_event(Pid, {get_data, 8 * 1024}),
+  {ok, Data, ActualLength}.
   
 %%--------------------------------------------------------------------
 %% @spec 
@@ -361,6 +365,24 @@ get_header(Request, Header) ->
   end.
 
 %
+get_attribute(Request, Header) ->
+  case lists:keysearch(Header, 1, Request#ajp_request_envelope.attributes) of
+    {value,{Header, Val}} -> Val;
+    _ -> false
+  end.
+%
+get_query_param(Request, Param, Default) ->
+  case lists:keysearch("query_string", 1, Request#ajp_request_envelope.attributes) of
+    {value,{_, Val}} -> 
+      KP = httpd:parse_query(binary_to_list(Val)),
+      proplists:get_value(Param, KP, Default);
+    _ -> false
+  end.
+
+get_uri(Request) ->
+  Request#ajp_request_envelope.request_uri.
+
+%
 %%--------------------------------------------------------------------
 %% @spec 
 %% @doc sends the ajp request end headers.
@@ -384,10 +406,40 @@ set_header(_Response, Header) ->
 %% find returns unknown_module
 %%--------------------------------------------------------------------  
 lookup_uri_handler(URI) ->
-  try list_to_existing_atom(lists:last(split_uri_path(URI))) of
-    Module -> Module
-  catch
-    _:_ -> {unknown_module, URI}
+  {ok, ContextRoot} = application:get_env(ajp_app, context_root),
+  CRSplit = split_uri_path(ContextRoot),
+  URISplit = split_uri_path(URI),
+  case lists:prefix(CRSplit, URISplit) of
+    true ->
+      try (URISplit -- CRSplit) of
+          [Module | _] -> list_to_atom(Module)
+      catch
+        _:_ -> {unknown_module, URI}
+      end;
+    _ ->
+      {bad_context_root, ContextRoot, URI}
+  end.
+  
+%
+get_data_bytes(_, Buffer, Length, Acc) when Length =< 0 ->
+  {done, Acc, Length, Buffer};
+  
+get_data_bytes(Socket, Buffer, Length, Acc) when Length > 0, Buffer =:= <<>> ->
+  gen_tcp:send(Socket, ajp:encode_get_body_response(Length)),
+  {ok, _L, Data} = ajp:read_ajp_packet(Socket, 500),
+  get_data_bytes(Socket, Data, Length, Acc);
+  
+get_data_bytes(Socket, Buffer, Length, Acc) when Length > 0 ->
+  D1 = read_requested_data(Socket, Buffer),
+  case ajp:read_buffered_ajp_packet(D1) of
+    {ok, 0, <<>>, Rest} ->
+      {done, Acc, Length, Rest};
+    {ok, _, Req, Rest} ->
+      << DataLength:16, Binary:DataLength/binary >> = Req,
+      get_data_bytes(Socket, Rest, (Length - DataLength), <<Acc/binary, Binary/binary>>);
+    incomplete ->
+      error_logger:info_report([{"Did not get enought data"},{data, D1}]),
+      {incomplete, Acc, Length, D1}
   end.
 
 %%--------------------------------------------------------------------
