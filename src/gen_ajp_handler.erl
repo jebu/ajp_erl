@@ -117,8 +117,8 @@ assigned({send_header, Headers}, {Cpid, _}, State = #handler_state{socket = Sock
 % req to send data
 %
 assigned({send_data, Binary}, {Cpid, _}, State = #handler_state{socket = Socket, hpid = Cpid}) ->
-  split_send_data(Socket, Binary),
-  {reply, data_sent, assigned, State, ?SCRIPT_TIMEOUT};
+  Return = split_send_data(Socket, Binary),
+  {reply, Return, assigned, State, ?SCRIPT_TIMEOUT};
 
 %
 % Catch all for sync messages in assigned state
@@ -331,8 +331,7 @@ request_data(Pid) ->
 %% @end 
 %%--------------------------------------------------------------------  
 send_data(Data, Pid) ->
-  data_sent = gen_fsm:sync_send_event(Pid, {send_data, Data}),
-  ok.
+  gen_fsm:sync_send_event(Pid, {send_data, Data}).
   
 %%--------------------------------------------------------------------
 %% @spec 
@@ -376,7 +375,7 @@ get_query_param(Request, Param, Default) ->
     {value,{_, Val}} -> 
       KP = httpd:parse_query(binary_to_list(Val)),
       proplists:get_value(Param, KP, Default);
-    _ -> false
+    _ -> Default
   end.
 
 get_uri(Request) ->
@@ -406,7 +405,7 @@ set_header(_Response, Header) ->
 %% find returns unknown_module
 %%--------------------------------------------------------------------  
 lookup_uri_handler(URI) ->
-  {ok, ContextRoot} = application:get_env(ajp_app, context_root),
+  {ok, ContextRoot} = application:get_env(ajp, context_root),
   CRSplit = split_uri_path(ContextRoot),
   URISplit = split_uri_path(URI),
   case lists:prefix(CRSplit, URISplit) of
@@ -424,8 +423,8 @@ lookup_uri_handler(URI) ->
 get_data_bytes(_, Buffer, Length, Acc) when Length =< 0 ->
   {done, Acc, Length, Buffer};
   
-get_data_bytes(Socket, Buffer, Length, Acc) when Length > 0, Buffer =:= <<>> ->
-  gen_tcp:send(Socket, ajp:encode_get_body_response(Length)),
+get_data_bytes(Socket, <<>>, Length, Acc) when Length > 0 ->
+  gen_tcp:send(Socket, ajp:encode_get_body_response(8192)),
   {ok, _L, Data} = ajp:read_ajp_packet(Socket, 500),
   get_data_bytes(Socket, Data, Length, Acc);
   
@@ -437,8 +436,8 @@ get_data_bytes(Socket, Buffer, Length, Acc) when Length > 0 ->
     {ok, _, Req, Rest} ->
       << DataLength:16, Binary:DataLength/binary >> = Req,
       get_data_bytes(Socket, Rest, (Length - DataLength), <<Acc/binary, Binary/binary>>);
-    incomplete ->
-      error_logger:info_report([{"Did not get enought data"},{data, D1}]),
+    incomplete_packet ->
+      error_logger:info_report([{"Did not get enought data"},{data, D1}, {buffer, Buffer}]),
       {incomplete, Acc, Length, D1}
   end.
 
@@ -496,7 +495,7 @@ read_requested_data(Socket, Buffer) ->
     {ok, _, _, _} ->
       Buffer;
     incomplete_packet ->
-      case gen_tcp:recv(Socket, 0, 0) of
+      case gen_tcp:recv(Socket, 0, 1000) of
         {ok, D1} ->
           read_requested_data(Socket, <<Buffer/binary, D1/binary>>);
         _ ->
@@ -509,12 +508,13 @@ split_send_data(_, <<>>) ->
   ok;
 split_send_data(Socket, Binary) when size(Binary) < 8000 ->
   gen_tcp:send(Socket, 
-               ajp:encode_body_response(Binary, byte_size(Binary))),
-  ok;
+      ajp:encode_body_response(Binary, byte_size(Binary)));
 split_send_data(Socket, <<Binary:8000/binary, Rest/binary>>) ->
-  gen_tcp:send(Socket, 
-               ajp:encode_body_response(Binary, byte_size(Binary))),  
-  split_send_data(Socket, Rest).
+  case gen_tcp:send(Socket, 
+               ajp:encode_body_response(Binary, byte_size(Binary))) of
+    ok -> split_send_data(Socket, Rest);
+    R -> R
+  end.
 
 % this clears up the socket, for cleaning up after a dead or incomplete script
 drain_socket(_, 0) ->
