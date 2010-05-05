@@ -42,9 +42,10 @@
 -record(handler_state, {socket, buffer, hpid}).
 
 %% API
--export([start_link/2, request_data/2, request_data/1,
+-export([start_link/1, request_data/2, request_data/1,
          send_data/2, send_headers/2, end_request/1, 
-         get_header/2, get_uri/1, set_header/2, 
+         get_header/2, get_uri/1, get_query_params/1, 
+         set_header/2, 
          get_attribute/2, get_query_param/3,
          send_error_response/3, dispatch_request/3]).
 
@@ -70,8 +71,8 @@ behaviour_info(_Other) ->
 
 %
 % exposed startup code
-start_link(Name, Socket) ->
-  gen_fsm:start_link({local, Name}, ?MODULE, [Socket], []).
+start_link(Socket) ->
+  gen_fsm:start_link(?MODULE, [Socket], []).
   
 %
 init([Socket]) ->
@@ -243,7 +244,7 @@ handle_info({tcp, Socket, Data}, idle, State = #handler_state{socket = Socket, b
   end;
 
 handle_info({tcp_closed, _}, _, State = #handler_state{socket = Socket}) ->
-  error_logger:info_report(["Service Handler shutting down other side terminated"]),
+  % error_logger:info_report(["Service Handler shutting down other side terminated"]),
   gen_tcp:close(Socket),
   {stop, normal, State};
   
@@ -373,9 +374,16 @@ get_attribute(Request, Header) ->
 get_query_param(Request, Param, Default) ->
   case lists:keysearch("query_string", 1, Request#ajp_request_envelope.attributes) of
     {value,{_, Val}} -> 
-      KP = httpd:parse_query(binary_to_list(Val)),
+      KP = httpd:parse_query(unicode_decode_url(binary_to_list(Val))),
       proplists:get_value(Param, KP, Default);
     _ -> Default
+  end.
+
+get_query_params(Request) ->
+  case lists:keysearch("query_string", 1, Request#ajp_request_envelope.attributes) of
+    {value,{_, Val}} -> 
+      httpd:parse_query(unicode_decode_url(binary_to_list(Val)));
+    _ -> []
   end.
 
 get_uri(Request) ->
@@ -405,7 +413,7 @@ set_header(_Response, Header) ->
 %% find returns unknown_module
 %%--------------------------------------------------------------------  
 lookup_uri_handler(URI) ->
-  {ok, ContextRoot} = application:get_env(ajp, context_root),
+  {ok, ContextRoot} = application:get_env(ajp_app, context_root),
   CRSplit = split_uri_path(ContextRoot),
   URISplit = split_uri_path(URI),
   case lists:prefix(CRSplit, URISplit) of
@@ -526,3 +534,14 @@ drain_socket(Socket, _) ->
     _ ->
       ok
     end.
+%
+unicode_decode_url([]) ->
+  [];
+unicode_decode_url([$%,$u,A,B,C,D | Rest]) ->
+  [((hex2dec(A) * 16 + hex2dec(B)) * 16 + hex2dec(C)) * 16 + hex2dec(D) | Rest];
+unicode_decode_url([First | Rest]) ->
+  [First | unicode_decode_url(Rest)].
+%
+hex2dec(X) when (X>=$0) andalso (X=<$9) -> X-$0;
+hex2dec(X) when (X>=$A) andalso (X=<$F) -> X-$A+10;
+hex2dec(X) when (X>=$a) andalso (X=<$f) -> X-$a+10.

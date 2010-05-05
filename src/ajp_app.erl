@@ -12,7 +12,7 @@
 -author('jebu@jebu.net').
 
 -behaviour(application).
-
+-export([start/0]).
 %% Application callbacks
 -export([start/2, stop/1]).
 -define(DEFAULT_AJP_PORT, 8009).
@@ -20,6 +20,9 @@
 %%====================================================================
 %% Application callbacks
 %%====================================================================
+start() ->
+  application:start(ajp_app).
+  
 %%--------------------------------------------------------------------
 %% @spec start(Type, StartArgs) -> {ok, Pid} |
 %%                                 {ok, Pid, State} |

@@ -32,7 +32,7 @@
 -behaviour(gen_server).
 
 -compile([verbose, report_errors, report_warnings, trace, debug_info]).
--define(TCP_OPTIONS, [binary, {active, false}, {reuseaddr, true}, {packet, raw}, {sndbuf, 16384}, {recbuf, 16384}]).
+-define(TCP_OPTIONS, [binary, {active, false}, {reuseaddr, true}, {packet, raw}, {sndbuf, 16384}, {recbuf, 16384}, {ip, {127,0,0,1}}]).
 
 -export([start_link/1, stop/0]).
 
@@ -83,11 +83,11 @@ ajp_worker(LSocket) ->
   case gen_tcp:accept(LSocket) of
     {ok, Socket} -> 
     	{Ms,S,Us} = erlang:now(),
-    	HandlerName = list_to_atom(lists:flatten(["ajp_worker_",
-                                                integer_to_list(Ms),
-                                                integer_to_list(S),
-                                                integer_to_list(Us)])),
-      HandlerSpec = {HandlerName, {gen_ajp_handler, start_link, [HandlerName, Socket]}, temporary, 2000, worker, dynamic},
+    	HandlerName = lists:flatten(["ajp_worker_",
+                                    integer_to_list(Ms),
+                                    integer_to_list(S),
+                                    integer_to_list(Us)]),
+      HandlerSpec = {HandlerName, {gen_ajp_handler, start_link, [Socket]}, temporary, 2000, worker, dynamic},
       {ok, CPid} = supervisor:start_child(ajp_sup, HandlerSpec),
       gen_tcp:controlling_process(Socket, CPid),
       ajp_worker(LSocket);

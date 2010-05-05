@@ -1,26 +1,37 @@
-# leave these lines alone
-.SUFFIXES: .erl .beam
 
-INCLUDE_DIR=../include
-.erl.beam:
-	erlc -I$(INCLUDE_DIR) -o $(EBIN_DIR) -pa $(EBIN_DIR) -W $<
+include ../../vsn.mk
 
-SOURCE_DIR=src
-EBIN_DIR=../ebin
-ERL = erl -o $(EBIN_DIR) -I ${INCLUDE_DIR}
-SRC = src
+EMULATOR=beam
+EBIN=../ebin
+INCLUDE=../include
 
-MODS = ajp ajp_server ajp_app ajp_sup gen_ajp_handler test_ajp_mount
+APP_TARGET=$(EBIN)/ajp_app.app
+APPUP_TARGET=$(EBIN)/ajp_app.appup
 
-all:	compile
+ERL_COMPILE_FLAGS += -I$(INCLUDE) -DTEST +warn_unused_vars +nowarn_shadow_vars +warn_unused_import +debug_info
 
-compile: ${MODS:%=%.beam}
+SOURCES= \
+  ajp.erl \
+  ajp_server.erl \
+  ajp_app.erl \
+  ajp_sup.erl \
+  gen_ajp_handler.erl \
+  test_ajp_mount.erl
 
-application: compile
+OBJECTS=$(SOURCES:%.erl=$(EBIN)/%.$(EMULATOR)) $(APP_TARGET) $(APPUP_TARGET)
 
-run:
-	${ERL} -pa ebin -s test test
+all: $(OBJECTS)
 
-# remove all the code
+$(OBJECTS): $(INCLUDE)/ajp_records.hrl
+
 clean:
-	rm -rf ../ebin/*.beam erl_crash.dump
+	rm -f $(OBJECTS)
+
+$(EBIN)/%.$(EMULATOR):%.erl
+	erlc -pa $(EBIN) -W $(ERL_COMPILE_FLAGS) -o$(EBIN) $<
+
+$(APP_TARGET): ajp_app.app.src ../../vsn.mk
+	sed -e 's;%VSN%;$(HARVESTER_VSN);' $< > $@
+
+$(APPUP_TARGET): ajp_app.appup.src ../../vsn.mk
+	sed -e 's;%VSN%;$(HARVESTER_VSN);' $< > $@

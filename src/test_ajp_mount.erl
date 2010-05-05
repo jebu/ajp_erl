@@ -60,9 +60,11 @@ handle_post_request(Message, PPid) ->
   ok = gen_ajp_handler:send_data(Data, PPid).
 
 %
-handle_put_request(_Message, PPid) ->
-  ok = gen_ajp_handler:send_headers(#ajp_response_envelope{headers=[{"content-length", "12"}]}, PPid),
-  ok = gen_ajp_handler:send_data(<<"testing data">>, PPid).
+handle_put_request(Message, PPid) ->
+  Length = gen_ajp_handler:get_header(Message, "content-length"),
+  {ok, Data, AL} = read_data(list_to_integer(Length), PPid),
+  ok = gen_ajp_handler:send_headers(#ajp_response_envelope{headers=[{"content-length", integer_to_list(AL)}]}, PPid),
+  ok = gen_ajp_handler:send_data(Data, PPid).
 
 %
 handle_delete_request(_Message, PPid) ->
