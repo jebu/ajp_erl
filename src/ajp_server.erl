@@ -82,13 +82,14 @@ handle_info({'EXIT', _Pid, _Reason}, LSocket) ->
 ajp_worker(LSocket) ->
   case gen_tcp:accept(LSocket) of
     {ok, Socket} -> 
-    	{Ms,S,Us} = erlang:now(),
-    	HandlerName = lists:flatten(["ajp_worker_",
-                                    integer_to_list(Ms),
-                                    integer_to_list(S),
-                                    integer_to_list(Us)]),
-      HandlerSpec = {HandlerName, {gen_ajp_handler, start_link, [Socket]}, temporary, 2000, worker, dynamic},
-      {ok, CPid} = supervisor:start_child(ajp_sup, HandlerSpec),
+    	%{Ms,S,Us} = erlang:now(),
+    	%HandlerName = lists:flatten(["ajp_worker_",
+      %                              integer_to_list(Ms),
+      %                              integer_to_list(S),
+      %                              integer_to_list(Us)]),
+      %HandlerSpec = {HandlerName, {gen_ajp_handler, start_link, [Socket]}, temporary, 2000, worker, dynamic},
+      %{ok, CPid} = supervisor:start_child(ajp_sup, HandlerSpec),
+      {ok, CPid} = gen_ajp_handler:start_link(Socket),
       gen_tcp:controlling_process(Socket, CPid),
       ajp_worker(LSocket);
     {error, closed} -> 
